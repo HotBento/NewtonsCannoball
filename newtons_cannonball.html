@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Newton's Cannonball</title>
+<style>
+  body { margin: 0; background: black; }
+  canvas { display: block; margin: auto; background: #000; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const G = 0.5; // 引力常数（游戏用）
+const planets = [];
+const numPlanets = 3;
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function dist(x1,y1,x2,y2){ const dx=x2-x1, dy=y2-y1; return Math.sqrt(dx*dx+dy*dy); }
+
+class Planet {
+  constructor(x, y, mass, radius) {
+    this.x = x;
+    this.y = y;
+    this.mass = mass;
+    this.radius = radius;
+  }
+  draw() {
+    ctx.beginPath();
+    const grad = ctx.createRadialGradient(this.x - this.radius*0.3, this.y - this.radius*0.3, this.radius*0.1, this.x, this.y, this.radius);
+    grad.addColorStop(0, '#ddd');
+    grad.addColorStop(1, '#666');
+    ctx.fillStyle = grad;
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// 随机生成星球，位置避免边界
+for (let i = 0; i < numPlanets; i++) {
+  let x = Math.random() * (canvas.width - 200) + 100;
+  let y = Math.random() * (canvas.height - 200) + 100;
+  let mass = Math.random() * 300 + 150;
+  let radius = Math.max(12, Math.sqrt(mass));
+  planets.push(new Planet(x, y, mass, radius));
+}
+
+// 玩家与目标点随机分配到不同星球
+let playerPlanetIndex = Math.floor(Math.random() * planets.length);
+let targetPlanetIndex;
+do {
+  targetPlanetIndex = Math.floor(Math.random() * planets.length);
+} while (targetPlanetIndex === playerPlanetIndex);
+
+const playerPlanet = planets[playerPlanetIndex];
+const targetPlanet = planets[targetPlanetIndex];
+
+// 玩家在其星球表面（左侧），略离开表面一点
+const player = {
+  x: playerPlanet.x - playerPlanet.radius - 6,
+  y: playerPlanet.y,
+  angle: 0,
+  power: 15
+};
+
+// 目标在另一颗星球表面（右侧）
+const target = {
+  x: targetPlanet.x + targetPlanet.radius + 6,
+  y: targetPlanet.y,
+  radius: 12
+};
+
+// 炮弹类
+let cannonball = null;
+class Cannonball {
+  constructor(x, y, vx, vy) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.radius = 6;
+    this.dead = false;
+    this.hit = false;
+  }
+  update() {
+    // 受所有星球引力影响
+    for (let planet of planets) {
+      let dx = planet.x - this.x;
+      let dy = planet.y - this.y;
+      let distSq = dx * dx + dy * dy;
+      let distVal = Math.sqrt(distSq);
+      if (distVal < planet.radius) {
+        // 撞到星球表面
+        this.dead = true;
+        return;
+      }
+      // 防止距离过小导致加速度爆炸
+      const safeDistSq = Math.max(distSq, (planet.radius * 0.5) ** 2);
+      let force = (G * planet.mass) / safeDistSq;
+      let ax = force * (dx / Math.sqrt(safeDistSq));
+      let ay = force * (dy / Math.sqrt(safeDistSq));
+      this.vx += ax;
+      this.vy += ay;
+    }
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // 超出边界也视为死亡
+    if (this.x < -1000 || this.x > canvas.width + 1000 || this.y < -1000 || this.y > canvas.height + 1000) {
+      this.dead = true;
+      return;
+    }
+
+    // 命中目标检测
+    let dxT = target.x - this.x;
+    let dyT = target.y - this.y;
+    if (!this.hit && Math.sqrt(dxT*dxT + dyT*dyT) < (target.radius + this.radius)) {
+      setTimeout(()=>alert('You hit the target!'),10);
+      this.hit = true;
+      location.reload();
+    }
+  }
+  draw() {
+    ctx.beginPath();
+    ctx.fillStyle = 'red';
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// 控制参数（更精细）
+const angleStep = 0.02; // radians per frame when holding arrow
+const powerStep = 0.05;
+const minPower = 1;
+const maxPower = 120;
+
+const keys = {};
+let isDragging = false;
+let pointerId = null;
+
+// 鼠标 / 触控交互：按住并拖动来瞄准和设置力度，放开发射
+canvas.addEventListener('pointerdown', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  // 只有在靠近玩家的位置时开始拖动（防止误触）
+  if (dist(mx,my, player.x, player.y) < 60) {
+    isDragging = true;
+    pointerId = e.pointerId;
+    canvas.setPointerCapture(pointerId);
+    updateAimFromMouse(mx,my);
+  }
+});
+canvas.addEventListener('pointermove', (e)=>{
+  if (!isDragging || e.pointerId !== pointerId) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  updateAimFromMouse(mx,my);
+});
+canvas.addEventListener('pointerup', (e)=>{
+  if (!isDragging || e.pointerId !== pointerId) return;
+  isDragging = false;
+  canvas.releasePointerCapture(pointerId);
+  pointerId = null;
+  // 发射
+  fire();
+});
+canvas.addEventListener('pointercancel', ()=>{ isDragging=false; pointerId=null; });
+
+function updateAimFromMouse(mx,my){
+  const dx = mx - player.x;
+  const dy = my - player.y;
+  player.angle = Math.atan2(dy, dx);
+  // 根据拖拽距离设定力度（缩放系数可调整）
+  const len = Math.sqrt(dx*dx + dy*dy);
+  player.power = clamp(len * 0.18, minPower, maxPower);
+}
+
+// 键盘控制（按住连续调整）
+window.addEventListener('keydown', (e)=>{
+  // 阻止默认页面对箭头键的滚动
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  keys[e.key] = true;
+  // 按空格发射（如果没有拖动）
+  if (e.key === ' ' && !isDragging) {
+    fire();
+  }
+});
+window.addEventListener('keyup', (e)=>{ keys[e.key] = false; });
+
+function fire(){
+  if (cannonball && !cannonball.dead) return; // 正在飞行时不能重复发射
+  const vx = Math.cos(player.angle) * player.power;
+  const vy = Math.sin(player.angle) * player.power;
+  // 从玩家位置稍微偏离一点发射，避免一开始就判定为撞击
+  cannonball = new Cannonball(player.x + Math.cos(player.angle)*12, player.y + Math.sin(player.angle)*12, vx, vy);
+}
+
+// 轨迹预测（模拟多重引力影响）
+function simulateTrajectory(x, y, vx, vy, steps=400){
+  const points = [];
+  let simX = x, simY = y, simVx = vx, simVy = vy;
+  const simDt = 0.6; // 模拟时间步长（调节预测平滑度）
+  for (let i = 0; i < steps; i++){
+    // 记录点
+    points.push({x: simX, y: simY});
+    // 物理更新
+    for (let planet of planets) {
+      let dx = planet.x - simX;
+      let dy = planet.y - simY;
+      let distSq = dx*dx + dy*dy;
+      let distVal = Math.sqrt(distSq);
+      if (distVal < planet.radius) return points; // 撞到星球，停止预测
+      const safeDistSq = Math.max(distSq, (planet.radius * 0.5) ** 2);
+      let force = (G * planet.mass) / safeDistSq;
+      let ax = force * (dx / Math.sqrt(safeDistSq));
+      let ay = force * (dy / Math.sqrt(safeDistSq));
+      simVx += ax * simDt;
+      simVy += ay * simDt;
+    }
+    simX += simVx * simDt;
+    simY += simVy * simDt;
+    if (simX < -2000 || simX > canvas.width + 2000 || simY < -2000 || simY > canvas.height + 2000) break;
+  }
+  return points;
+}
+
+function drawTrajectoryPreview(){
+  // 基于当前角度与力度做预测
+  const initVx = Math.cos(player.angle) * player.power;
+  const initVy = Math.sin(player.angle) * player.power;
+  const pts = simulateTrajectory(player.x + Math.cos(player.angle)*12, player.y + Math.sin(player.angle)*12, initVx, initVy, 350);
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < pts.length - 1; i++){
+    ctx.moveTo(pts[i].x, pts[i].y);
+    ctx.lineTo(pts[i+1].x, pts[i+1].y);
+  }
+  ctx.stroke();
+  // 在一些关键点画小圆点增加可见性
+  for (let i = 0; i < pts.length; i += 12) {
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.arc(pts[i].x, pts[i].y, 2, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function loop(){
+  // 持续按键调整角度与力度（可配合 Shift 细调）
+  const shiftHeld = keys['Shift'] || keys['ShiftLeft'] || keys['ShiftRight'];
+  const aStep = shiftHeld ? angleStep / 5 : angleStep;
+  const pStep = shiftHeld ? powerStep / 5 : powerStep;
+  if (keys['ArrowUp']) player.angle -= aStep;
+  if (keys['ArrowDown']) player.angle += aStep;
+  if (keys['ArrowRight']) player.power = clamp(player.power + pStep, minPower, maxPower);
+  if (keys['ArrowLeft']) player.power = clamp(player.power - pStep, minPower, maxPower);
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // 绘制星球
+  for (let planet of planets) planet.draw();
+
+  // 目标
+  ctx.beginPath();
+  ctx.fillStyle = 'yellow';
+  ctx.arc(target.x, target.y, target.radius, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.stroke();
+
+  // 轨迹预览（当没有炮弹飞行或仍想调整时显示）
+  if (!cannonball || cannonball.dead) drawTrajectoryPreview();
+
+  // 玩家与指向线
+  ctx.beginPath();
+  ctx.fillStyle = 'blue';
+  ctx.arc(player.x, player.y, 8, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = 'white';
+  ctx.beginPath();
+  ctx.moveTo(player.x, player.y);
+  ctx.lineTo(player.x + Math.cos(player.angle) * (20 + player.power*0.6), player.y + Math.sin(player.angle) * (20 + player.power*0.6));
+  ctx.stroke();
+
+  // 炮弹更新与绘制
+  if (cannonball){
+    if (!cannonball.dead) {
+      cannonball.update();
+      cannonball.draw();
+    } else {
+      // 射击结束后可以按 R 重置（或自动重置）
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillText('Press R to reset', canvas.width - 140, 20);
+      if (keys['r'] || keys['R']) location.reload();
+    }
+  }
+
+  // UI：角度和力度数值
+  ctx.fillStyle = 'white';
+  ctx.font = '16px Arial';
+  const angleDeg = (player.angle * 180 / Math.PI).toFixed(1);
+  ctx.fillText(`Angle: ${angleDeg}°`, 10, 22);
+  ctx.fillText(`Power: ${player.power.toFixed(1)}`, 10, 44);
+  ctx.fillText('Drag from player to aim (release to fire). Arrow keys to fine tune. Hold Shift for finer adjustments.', 10, 68);
+
+  // Power bar
+  const barX = 10, barY = 80, barW = 140, barH = 10;
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.strokeRect(barX, barY, barW, barH);
+  const fillW = (player.power - minPower) / (maxPower - minPower) * barW;
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillRect(barX, barY, fillW, barH);
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
