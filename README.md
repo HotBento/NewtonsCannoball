@@ -1,5 +1,7 @@
 # NewtonsCannoball
 
+[中文](https://github.com/HotBento/NewtonsCannoball/blob/main/README_ZH.md)
+
 Game Description:
 Experience the fascinating laws of gravity in this physics-based 2D game. Multiple planets with unique gravitational pulls are randomly placed on the screen. Your goal is to launch a cannonball from one planet and use the gravitational forces of all planets to curve its path and hit a target located on another planet.
 
